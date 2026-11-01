@@ -36,10 +36,28 @@ jobs:
           TOKEN=$(curl -sLH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
           python3 -c "import sys,json,base64; p=sys.argv[1].split('.')[1]; p+='='*(-len(p)%4); d=json.loads(base64.urlsafe_b64decode(p)); print({k:d.get(k) for k in ['iss','sub','aud','repository','repository_owner','ref']})" "$TOKEN"
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials (OIDC)
+        id: aws_oidc
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
+      
+      - name: Configure AWS credentials (access keys fallback)
+        if: ${{ steps.aws_oidc.outcome != 'success' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Fail if AWS credentials could not be configured
+        if: ${{ steps.aws_oidc.outcome != 'success' && (secrets.AWS_ACCESS_KEY_ID == '' || secrets.AWS_SECRET_ACCESS_KEY == '') }}
+        run: |
+          echo "OIDC role assumption failed and fallback AWS access key secrets are not configured."
+          echo "Either fix the role trust policy for GitHub OIDC or add AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY secrets."
+          exit 1
 
       # Hashed build assets: cache for a year
       - name: Upload immutable assets
